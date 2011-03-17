@@ -24,10 +24,11 @@
 CC=gcc
 CFLAGS=-g -Wall
 INCS=-Iinclude/
-OBJS=main.o
+LIBS=-lnl-genl
+OBJS=nfcctl.o main.o
 
 nfcex:	$(OBJS)
-	$(CC) $(OBJS) -o nfcex
+	$(CC) $(OBJS) -o nfcex $(LIBS)
 
 %.o: %.c
 	$(CC) $(INCS) $(CFLAGS) -c $< -o $@

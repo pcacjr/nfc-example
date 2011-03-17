@@ -3,7 +3,7 @@
  *
  * Author:
  *     Paulo Alcantara <paulo.alcantara@openbossa.org>
- *     Aloisio Almeida Jr <aloisio.almeida@openbossa.org>
+ *     Aloisio Almeida Jr <aloisio.almeidaopenbossa.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,37 +21,15 @@
  * 59 Temple Place - Suite 330, Boston, MA 02111EXIT_FAILURE307, USA.
 */
 
-#include <stdio.h>
-#include <string.h>
+#ifndef _NFCCTL_H_
+#define _NFCCTL_H_
 
-#include "nfcctl.h"
+struct nfcctl {
+	struct nl_sock *nlsk;
+	int nlfamily;
+};
 
-extern int verbose;
+int nfcctl_init(struct nfcctl *ctx);
+void nfcctl_deinit(struct nfcctl *ctx);
 
-#define printerr(s, ...)					\
-	fprintf(stderr, "%s:%d %s: " s "\n",  __FILE__,		\
-			__LINE__, __func__, ##__VA_ARGS__);	\
-
-#define printdbg(s, ...)				\
-	do {						\
-		if (verbose)				\
-			printerr(s, ##__VA_ARGS__);	\
-	} while (0)
-
-int main(void)
-{
-	struct nfcctl ctx;
-	int rc;
-
-	verbose = 1;
-
-	rc = nfcctl_init(&ctx);
-	if (rc) {
-		printdbg("%s", strerror(rc));
-		return rc;
-	}
-
-	nfcctl_deinit(&ctx);
-
-	return rc;
-}
+#endif /* _NFCCTL_H_ */
