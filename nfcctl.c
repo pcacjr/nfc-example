@@ -80,6 +80,120 @@ static int nlerr2syserr(int err)
 	}
 }
 
+struct targets_found_hdl_data {
+	tgt_found_handler_t handler;
+	void *hdl_param;
+};
+
+static int targets_found_handler(struct nl_msg *n, void *arg)
+{
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(n));
+	struct targets_found_hdl_data *hdl_data = arg;
+	struct nlattr *attr[NFC_ATTR_MAX + 1];
+	struct nlattr *attr_nest[NFC_TARGET_ATTR_MAX + 1];
+	struct nlattr *attr_tgt;
+	int rem;
+	uint32_t dev_idx;
+	struct nfc_target tgt;
+	int rc;
+
+	printdbg("IN");
+
+	if (gnlh->cmd != NFC_EVENT_TARGETS_FOUND) {
+		printdbg("The received message is not NFC_EVENT_TARGETS_FOUND");
+		return NL_SKIP;
+	}
+
+	nla_parse(attr, NFC_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+		  genlmsg_attrlen(gnlh, 0), NULL);
+	if (!attr[NFC_ATTR_TARGETS] || !attr[NFC_ATTR_DEVICE_INDEX]) {
+		printdbg("Missing attribute in received message");
+		return NL_SKIP;
+	}
+
+	dev_idx = nla_get_u32(attr[NFC_ATTR_DEVICE_INDEX]);
+
+	attr_tgt = nla_data(attr[NFC_ATTR_TARGETS]);
+	rem = nla_len(attr[NFC_ATTR_TARGETS]);
+	nla_for_each_nested(attr_tgt, attr[NFC_ATTR_TARGETS], rem) {
+		nla_parse(attr_nest, NFC_TARGET_ATTR_MAX, nla_data(attr_tgt),
+				nla_len(attr_tgt), NULL);
+		if (!attr_nest[NFC_TARGET_ATTR_TARGET_INDEX] ||
+			!attr_nest[NFC_TARGET_ATTR_SUPPORTED_PROTOCOLS]) {
+			printdbg("Missing nested attribute in received"
+								" message");
+			return NL_SKIP;
+		}
+
+		tgt.idx = nla_get_u32(attr_nest[NFC_TARGET_ATTR_TARGET_INDEX]);
+		tgt.protocols = nla_get_u32(
+				attr_nest[NFC_TARGET_ATTR_SUPPORTED_PROTOCOLS]);
+
+		rc = hdl_data->handler(hdl_data->hdl_param, dev_idx, &tgt);
+		if (rc == TARGET_FOUND_STOP)
+			return NL_STOP;
+	}
+
+	return NL_SKIP;
+}
+
+static int no_seq_check(struct nl_msg *n, void *arg)
+{
+	printdbg("IN");
+
+	return NL_OK;
+}
+
+int nfcctl_targets_found(struct nfcctl *ctx, tgt_found_handler_t handler,
+								void *hdl_param)
+{
+	struct nl_cb *cb;
+	fd_set rfds;
+	int sockfd;
+	struct targets_found_hdl_data hdl_data;
+	int rc;
+
+	printdbg("IN");
+
+	cb = nl_cb_alloc(NL_CB_VERBOSE);
+	if (!cb) {
+		printdbg("Error allocating struct nl_cb");
+		return -ENOMEM;
+	}
+
+	hdl_data.handler = handler;
+	hdl_data.hdl_param = hdl_param;
+
+	nl_cb_set(cb, NL_CB_SEQ_CHECK, NL_CB_CUSTOM, no_seq_check, NULL);
+	nl_cb_set(cb, NL_CB_VALID, NL_CB_CUSTOM, targets_found_handler,
+								&hdl_data);
+
+	do {
+		FD_ZERO(&rfds);
+
+		sockfd = nl_socket_get_fd(ctx->nlsk);
+		FD_SET(sockfd, &rfds);
+
+		rc = select(sockfd + 1, &rfds, NULL, NULL, NULL);
+	} while (rc == -1 && errno == EINTR);
+
+	if (rc) {
+		if (FD_ISSET(sockfd, &rfds)) {
+			rc = nl_recvmsgs(ctx->nlsk, cb);
+			if (rc) {
+				rc = -nlerr2syserr(rc);
+				goto out;
+			}
+		}
+	}
+
+	rc = 0;
+
+out:
+	nl_cb_put(cb);
+	return rc;
+}
+
 static int error_handler(struct sockaddr_nl *nla, struct nlmsgerr *err,
 				void *arg)
 {
@@ -164,6 +278,70 @@ out:
 	return rc;
 }
 
+int nfcctl_stop_poll(struct nfcctl *ctx, struct nfc_dev *dev)
+{
+	struct nl_msg *msg;
+	void *hdr;
+	int rc;
+
+	printdbg("IN");
+
+	msg = nlmsg_alloc();
+	if (!msg) {
+		printdbg("Error allocating struct nl_msg");
+		return -ENOMEM;
+	}
+
+	hdr = genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, ctx->nlfamily, 0,
+			  NLM_F_REQUEST, NFC_CMD_STOP_POLL, NFC_GENL_VERSION);
+	if (!hdr) {
+		printdbg("Null header on genlmsg_put()");
+		rc = -EINVAL;
+		goto nla_put_failure;
+	}
+
+	NLA_PUT_U32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx);
+
+	rc = send_and_recv_msgs(ctx, msg, NULL, NULL);
+
+nla_put_failure:
+	nlmsg_free(msg);
+	return rc;
+}
+
+int nfcctl_start_poll(struct nfcctl *ctx, struct nfc_dev *dev,
+							uint32_t protocols)
+{
+	struct nl_msg *msg;
+	void *hdr;
+	int rc;
+
+	printdbg("IN");
+
+	msg = nlmsg_alloc();
+	if (!msg) {
+		printdbg("Error allocating struct nl_msg");
+		return -ENOMEM;
+	}
+
+	hdr = genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, ctx->nlfamily, 0,
+			NLM_F_REQUEST, NFC_CMD_START_POLL, NFC_GENL_VERSION);
+	if (!hdr) {
+		printdbg("Null header on genlmsg_put()");
+		rc = -EINVAL;
+		goto nla_put_failure;
+	}
+
+	NLA_PUT_U32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx);
+	NLA_PUT_U32(msg, NFC_ATTR_PROTOCOLS, protocols);
+
+	rc = send_and_recv_msgs(ctx, msg, NULL, NULL);
+
+nla_put_failure:
+	nlmsg_free(msg);
+	return rc;
+}
+
 struct get_devices_hdl_data {
 	struct nfc_dev *devl;
 	uint8_t devl_count;
@@ -239,8 +417,88 @@ out:
 	return rc;
 }
 
+struct get_multicast_id_hdl_data {
+	const char *group;
+	int id;
+};
+
+static int get_multicast_id_handler(struct nl_msg *msg, void *arg)
+{
+	struct get_multicast_id_hdl_data *hdl_data = arg;
+	struct nlattr *tb[CTRL_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	struct nlattr *mcgrp;
+	int i;
+
+	printdbg("IN");
+
+	nla_parse(tb, CTRL_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+		  genlmsg_attrlen(gnlh, 0), NULL);
+
+	if (!tb[CTRL_ATTR_MCAST_GROUPS])
+		return NL_SKIP;
+
+	nla_for_each_nested(mcgrp, tb[CTRL_ATTR_MCAST_GROUPS], i) {
+		struct nlattr *tb2[CTRL_ATTR_MCAST_GRP_MAX + 1];
+
+		nla_parse(tb2, CTRL_ATTR_MCAST_GRP_MAX, nla_data(mcgrp),
+			  nla_len(mcgrp), NULL);
+		if (!tb2[CTRL_ATTR_MCAST_GRP_NAME] ||
+		    !tb2[CTRL_ATTR_MCAST_GRP_ID] ||
+		    strncmp(nla_data(tb2[CTRL_ATTR_MCAST_GRP_NAME]),
+			       hdl_data->group,
+			       nla_len(tb2[CTRL_ATTR_MCAST_GRP_NAME])))
+			continue;
+
+		hdl_data->id = nla_get_u32(tb2[CTRL_ATTR_MCAST_GRP_ID]);
+		break;
+	};
+
+	return NL_SKIP;
+}
+
+static int get_multicast_id(struct nfcctl *ctx, const char *family,
+					const char *group)
+{
+	struct nl_msg *msg;
+	void *hdr;
+	struct get_multicast_id_hdl_data hdl_data;
+	int rc;
+
+	printdbg("IN");
+
+	msg = nlmsg_alloc();
+	if (!msg) {
+		printdbg("Error allocating struct nl_msg");
+		return -ENOMEM;
+	}
+
+	hdr = genlmsg_put(msg, 0, 0, genl_ctrl_resolve(ctx->nlsk, "nlctrl"), 0,
+			0, CTRL_CMD_GETFAMILY, 0);
+	if (!hdr) {
+		printdbg("Null header on genlmsg_put()");
+		rc = -EINVAL;
+		goto nla_put_failure;
+	}
+
+	NLA_PUT_STRING(msg, CTRL_ATTR_FAMILY_NAME, family);
+
+	hdl_data.group = group;
+
+	rc = send_and_recv_msgs(ctx, msg, get_multicast_id_handler, &hdl_data);
+	if (rc)
+		goto nla_put_failure;
+
+	rc = hdl_data.id;
+
+nla_put_failure:
+	nlmsg_free(msg);
+	return rc;
+}
+
 int nfcctl_init(struct nfcctl *ctx)
 {
+	int id;
 	int rc;
 
 	printdbg("IN");
@@ -263,6 +521,20 @@ int nfcctl_init(struct nfcctl *ctx)
 	if (ctx->nlfamily < 0) {
 		rc = -nlerr2syserr(ctx->nlfamily);
 		printdbg("Error resolving genl NFC family: %s", strerror(rc));
+		goto free_nlsk;
+	}
+
+	id = get_multicast_id(ctx, NFC_GENL_NAME,
+					NFC_GENL_MCAST_EVENT_NAME);
+	if (id <= 0) {
+		rc = id;
+		goto free_nlsk;
+	}
+
+	rc = nl_socket_add_membership(ctx->nlsk, id);
+	if (rc) {
+		printdbg("Error adding nl socket to membership");
+		rc = -nlerr2syserr(rc);
 		goto free_nlsk;
 	}
 

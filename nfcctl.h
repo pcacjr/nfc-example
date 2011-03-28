@@ -32,6 +32,11 @@ struct nfc_dev {
 	uint32_t protocols;
 };
 
+struct nfc_target {
+	uint32_t idx;
+	uint32_t protocols;
+};
+
 struct nfcctl {
 	struct nl_sock *nlsk;
 	int nlfamily;
@@ -42,5 +47,15 @@ void nfcctl_deinit(struct nfcctl *ctx);
 
 int nfcctl_get_devices(struct nfcctl *ctx, struct nfc_dev *devl,
 							uint8_t devl_max);
+int nfcctl_start_poll(struct nfcctl *ctx, struct nfc_dev *dev,
+							uint32_t protocols);
+int nfcctl_stop_poll(struct nfcctl *ctx, struct nfc_dev *dev);
+
+#define TARGET_FOUND_SKIP 0
+#define TARGET_FOUND_STOP 1
+typedef int (*tgt_found_handler_t) (void *hdl_param, uint32_t dev_idx,
+							struct nfc_target *tgt);
+int nfcctl_targets_found(struct nfcctl *ctx, tgt_found_handler_t handler,
+							void *hdl_param);
 
 #endif /* _NFCCTL_H_ */
