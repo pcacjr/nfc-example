@@ -24,6 +24,14 @@
 #ifndef _NFCCTL_H_
 #define _NFCCTL_H_
 
+#include <stdint.h>
+
+struct nfc_dev {
+	uint32_t idx;
+	const char *name;
+	uint32_t protocols;
+};
+
 struct nfcctl {
 	struct nl_sock *nlsk;
 	int nlfamily;
@@ -31,5 +39,8 @@ struct nfcctl {
 
 int nfcctl_init(struct nfcctl *ctx);
 void nfcctl_deinit(struct nfcctl *ctx);
+
+int nfcctl_get_devices(struct nfcctl *ctx, struct nfc_dev *devl,
+							uint8_t devl_max);
 
 #endif /* _NFCCTL_H_ */
