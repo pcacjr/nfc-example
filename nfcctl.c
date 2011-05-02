@@ -23,6 +23,7 @@
 
 #include <stdlib.h>
 #include <errno.h>
+#include <unistd.h>
 
 #include <netlink/netlink.h>
 #include <netlink/genl/genl.h>
@@ -31,6 +32,8 @@
 #include <linux/nfc.h>
 
 #include "nfcctl.h"
+
+#define AF_NFC 39
 
 int verbose;
 
@@ -78,6 +81,38 @@ static int nlerr2syserr(int err)
 	default:
 		return err;
 	}
+}
+
+int nfcctl_target_init(struct nfcctl *ctx, uint32_t dev_idx, uint32_t tgt_idx,
+							uint32_t protocol)
+{
+	int fd;
+	struct sockaddr_nfc addr;
+	int rc;
+
+	printdbg("IN");
+
+	fd = socket(AF_NFC, SOCK_SEQPACKET, NFC_SOCKPROTO_RAW);
+	if (fd == -1)
+		return errno;
+
+	addr.sa_family = AF_NFC;
+	addr.dev_idx = dev_idx;
+	addr.target_idx = tgt_idx;
+	addr.nfc_protocol = protocol;
+
+	rc = connect(fd, (struct sockaddr *) &addr, sizeof(addr));
+	if (rc) {
+		rc = errno;
+		goto close_sock;
+	}
+
+	ctx->target_fd = fd;
+	return 0;
+
+close_sock:
+	close(fd);
+	return rc;
 }
 
 struct targets_found_hdl_data {
@@ -538,6 +573,8 @@ int nfcctl_init(struct nfcctl *ctx)
 		goto free_nlsk;
 	}
 
+	ctx->target_fd = -1;
+
 	return 0;
 
 free_nlsk:
@@ -549,9 +586,12 @@ void nfcctl_deinit(struct nfcctl *ctx)
 {
 	printdbg("IN");
 
-	if (!ctx->nlsk)
-		return;
+	if (ctx->target_fd > -1) {
+		close(ctx->target_fd);
+		ctx->target_fd = -1;
+	}
 
-	nl_socket_free(ctx->nlsk);
-	ctx->nlsk = NULL;
+	if (ctx->nlsk)
+		nl_socket_free(ctx->nlsk);
+		ctx->nlsk = NULL;
 }

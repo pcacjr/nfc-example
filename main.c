@@ -25,9 +25,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <errno.h>
 #include <sys/socket.h>
 
 #include "nfcctl.h"
+#include "tag_mifare.h"
 #include "linux/nfc.h"
 
 #define NFC_DEV_MAX 4
@@ -48,6 +50,7 @@ enum {
 	CMD_UNSPEC,
 	CMD_LIST_DEVICES,
 	CMD_LIST_TARGETS,
+	CMD_READ_TAG,
 };
 
 int cmd;
@@ -56,6 +59,7 @@ const struct option lops[] = {
 	{ "verbose", no_argument, &verbose, 1 },
 	{ "list-devices", no_argument, &cmd, CMD_LIST_DEVICES },
 	{ "list-targets", no_argument, &cmd, CMD_LIST_TARGETS },
+	{ "read-tag", no_argument, &cmd, CMD_READ_TAG },
 	{ "protocol", required_argument, NULL, 'p' },
 	{ 0, 0, 0, 0 },
 };
@@ -172,11 +176,12 @@ static int print_target_handler(void *arg, uint32_t dev_idx,
 	return TARGET_FOUND_SKIP;
 }
 
-static int list_targets(uint32_t protocols)
+static int list_targets(int protocol)
 {
 	struct nfcctl ctx;
 	struct nfc_dev devl[NFC_DEV_MAX];
 	uint8_t devl_count;
+	uint32_t protocols;
 	struct print_target_hdl_data params;
 	int rc;
 
@@ -187,6 +192,14 @@ static int list_targets(uint32_t protocols)
 	devl_count = rc;
 	if (!devl_count)
 		goto out;
+
+	if (protocol >= 0) {
+		protocols = 1 << protocol;
+	} else {
+		protocols = NFC_PROTO_JEWEL_MASK | NFC_PROTO_MIFARE_MASK |
+			NFC_PROTO_FELICA_MASK | NFC_PROTO_ISO14443_MASK |
+			NFC_PROTO_NFC_DEP_MASK;
+	}
 
 	rc = start_poll_all_devices(&ctx, devl, devl_count, protocols);
 	if (rc)
@@ -211,15 +224,93 @@ out:
 	return rc;
 }
 
+struct save_target_hdl_data {
+	uint32_t desired_protocol;
+	uint32_t dev_idx;
+	uint32_t tgt_idx;
+};
+
+static int save_target_handler(void *arg, uint32_t dev_idx,
+							struct nfc_target *tgt)
+{
+	struct save_target_hdl_data *params = arg;
+
+	if (tgt->protocols & (1 << params->desired_protocol)) {
+		params->dev_idx = dev_idx;
+		params->tgt_idx = tgt->idx;
+		return TARGET_FOUND_STOP;
+	}
+
+	return TARGET_FOUND_SKIP;
+}
+
+static int read_tag(uint32_t protocol)
+{
+	struct nfcctl ctx;
+	struct nfc_dev devl[NFC_DEV_MAX];
+	uint8_t devl_count;
+	uint8_t buf[TAG_MIFARE_MAX_SIZE + 1];
+	struct save_target_hdl_data params;
+	int rc;
+
+	if (protocol != NFC_PROTO_MIFARE) {
+		printerr("Tag read support for protocol (%d) not"
+						" implemented\n", protocol);
+		return -ENOSYS;
+	}
+
+	rc = init_and_get_devices(&ctx, devl);
+	if (rc < 0)
+		goto error;
+
+	devl_count = rc;
+	if (!devl_count)
+		goto out;
+
+	rc = start_poll_all_devices(&ctx, devl, devl_count, 1 << protocol);
+	if (rc)
+		goto error;
+
+	params.desired_protocol = protocol;
+
+	rc = nfcctl_targets_found(&ctx, save_target_handler, &params);
+	if (rc)
+		goto error;
+
+	rc = nfcctl_target_init(&ctx, params.dev_idx, params.tgt_idx, protocol);
+	if (rc)
+		goto error;
+
+	rc = tag_mifare_read(ctx.target_fd, buf, TAG_MIFARE_MAX_SIZE);
+	if (rc == -1) {
+		rc = errno;
+		goto error;
+	}
+
+	buf[TAG_MIFARE_MAX_SIZE] = '\0';
+
+	printf("%s\n", (char *) buf);
+
+	rc = 0;
+	goto out;
+
+error:
+	printerr("%s", strerror(rc));
+out:
+	nfcctl_deinit(&ctx);
+	return rc;
+}
+
 static void usage(const char *prog)
 {
-	printf("Usage: %s  [-v] [-p PROT] (-d|-t)\n"
+	printf("Usage: %s  [-v] [-p PROT] (-d|-t|-r)\n"
 		"Option:\t\t\t\tDescription:\n"
 		"-v, --verbose\t\t\tEnable verbosity\n"
 		"-p, --protocol\t\t\tRestrict to PROT protocol\n"
 		"\t\t\t\tPROT = {mifare}\n"
 		"-d, --list-devices\t\tList all attached NFC devices\n"
-		"-t, --list-targets\t\tList all found NFC targets\n\n",
+		"-t, --list-targets\t\tList all found NFC targets\n"
+		"-r, --read-tag\t\t\tRead tag\n\n",
 		prog);
 
 	exit(EXIT_FAILURE);
@@ -229,19 +320,17 @@ int main(int argc, char **argv)
 {
 	int opt, op_idx;
 	int rc;
-	uint32_t protocols;
+	int protocol;
 
 	if (argc == 1)
 		usage(*argv);
 
 	cmd = CMD_UNSPEC;
 	op_idx = 0;
-	protocols = NFC_PROTO_JEWEL_MASK | NFC_PROTO_MIFARE_MASK |
-			NFC_PROTO_FELICA_MASK | NFC_PROTO_ISO14443_MASK |
-			NFC_PROTO_NFC_DEP_MASK;
+	protocol = -1;
 
 	for (;;) {
-		opt = getopt_long(argc, argv, "vdtp:", lops, &op_idx);
+		opt = getopt_long(argc, argv, "vdtrp:", lops, &op_idx);
 		if (opt < 0)
 			break;
 
@@ -255,9 +344,12 @@ int main(int argc, char **argv)
 		case 't':
 			cmd = CMD_LIST_TARGETS;
 			break;
+		case 'r':
+			cmd = CMD_READ_TAG;
+			break;
 		case 'p':
 			if (!strcasecmp(optarg, "mifare")) {
-				protocols = NFC_PROTO_MIFARE_MASK;
+				protocol = NFC_PROTO_MIFARE;
 			} else {
 				printerr("%s is not a valid argument to -p\n",
 									optarg);
@@ -279,7 +371,14 @@ int main(int argc, char **argv)
 		rc = list_devices();
 		break;
 	case CMD_LIST_TARGETS:
-		rc = list_targets(protocols);
+		rc = list_targets(protocol);
+		break;
+	case CMD_READ_TAG:
+		if (protocol == -1) {
+			printerr("-r command requires protocol choice");
+			usage(*argv);
+		}
+		rc = read_tag(protocol);
 		break;
 	default:
 		usage(*argv);

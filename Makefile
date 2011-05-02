@@ -25,7 +25,7 @@ CC=gcc
 CFLAGS=-g -Wall
 INCS=-Iinclude/
 LIBS=-lnl-genl
-OBJS=nfcctl.o main.o
+OBJS=tag_mifare.o nfcctl.o main.o
 
 nfcex:	$(OBJS)
 	$(CC) $(OBJS) -o nfcex $(LIBS)

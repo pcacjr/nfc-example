@@ -40,6 +40,7 @@ struct nfc_target {
 struct nfcctl {
 	struct nl_sock *nlsk;
 	int nlfamily;
+	int target_fd;
 };
 
 int nfcctl_init(struct nfcctl *ctx);
@@ -57,5 +58,8 @@ typedef int (*tgt_found_handler_t) (void *hdl_param, uint32_t dev_idx,
 							struct nfc_target *tgt);
 int nfcctl_targets_found(struct nfcctl *ctx, tgt_found_handler_t handler,
 							void *hdl_param);
+
+int nfcctl_target_init(struct nfcctl *ctx, uint32_t dev_idx, uint32_t tgt_idx,
+							uint32_t protocol);
 
 #endif /* _NFCCTL_H_ */
