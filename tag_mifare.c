@@ -44,8 +44,10 @@ struct mifare_cmd {
 #define BLK_TO_B(x) (x * BLK_SIZE)
 
 #define CMD_READ 0x30
+#define CMD_WRITE_1BLK 0xA2
 
 #define CMD_READ_BLK_COUNT 4
+#define CMD_WRITE_1BLK_BLK_COUNT 1
 
 #define NFC_HEADER_SIZE 1
 
@@ -176,4 +178,63 @@ int tag_mifare_read(int fd, void *buf, size_t count)
 	}
 
 	return bytes_count;
+}
+
+int tag_mifare_write(int fd, const void *buf, size_t count)
+{
+	size_t write_size = BLK_TO_B(CMD_WRITE_1BLK_BLK_COUNT);
+	size_t send_size = sizeof(struct mifare_cmd) + write_size;
+	uint8_t send_buf[send_size];
+	struct mifare_cmd *cmd = (struct mifare_cmd *) send_buf;
+	uint8_t recv_buf[NFC_HEADER_SIZE];
+	size_t bytes_count;
+	int rc;
+
+	printdbg("IN");
+
+	if (count > TAG_MIFARE_MAX_SIZE) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	cmd->cmd = CMD_WRITE_1BLK;
+	cmd->block = DATA_BLOCK_START;
+
+	bytes_count = 0;
+
+	while (bytes_count < count) {
+		size_t bytes_to_send = write_size;
+
+		if (bytes_count + write_size > count) {
+			bytes_to_send = count - bytes_count;
+			memset(cmd->data + bytes_to_send, 0, write_size -
+								bytes_to_send);
+		}
+		memcpy(cmd->data, buf + bytes_count, bytes_to_send);
+
+		rc = send_command(fd, cmd, send_size);
+		if (rc == -1)
+			return rc;
+
+		cmd->block += CMD_WRITE_1BLK_BLK_COUNT;
+		bytes_count += bytes_to_send;
+	}
+
+	bytes_count = 0;
+
+	while (bytes_count < count) {
+
+		rc = recv_command_reply(fd, recv_buf, NFC_HEADER_SIZE);
+		if (rc == -1)
+			return bytes_count;
+
+		if (recv_buf[0] != 0) {
+			errno = EIO;
+			return bytes_count;
+		}
+
+		bytes_count += write_size;
+	}
+
+	return count;
 }

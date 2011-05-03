@@ -51,6 +51,7 @@ enum {
 	CMD_LIST_DEVICES,
 	CMD_LIST_TARGETS,
 	CMD_READ_TAG,
+	CMD_WRITE_TAG,
 };
 
 int cmd;
@@ -60,6 +61,7 @@ const struct option lops[] = {
 	{ "list-devices", no_argument, &cmd, CMD_LIST_DEVICES },
 	{ "list-targets", no_argument, &cmd, CMD_LIST_TARGETS },
 	{ "read-tag", no_argument, &cmd, CMD_READ_TAG },
+	{ "write-tag", required_argument, &cmd, CMD_WRITE_TAG },
 	{ "protocol", required_argument, NULL, 'p' },
 	{ 0, 0, 0, 0 },
 };
@@ -301,16 +303,69 @@ out:
 	return rc;
 }
 
+static int write_tag(uint32_t protocol, char *string, size_t lenght)
+{
+	struct nfcctl ctx;
+	struct nfc_dev devl[NFC_DEV_MAX];
+	uint8_t devl_count;
+	struct save_target_hdl_data params;
+	int rc;
+
+	if (protocol != NFC_PROTO_MIFARE) {
+		printerr("Tag write support for protocol (%d) not"
+						" implemented\n", protocol);
+		return -ENOSYS;
+	}
+
+	rc = init_and_get_devices(&ctx, devl);
+	if (rc < 0)
+		goto error;
+
+	devl_count = rc;
+	if (!devl_count)
+		goto out;
+
+	rc = start_poll_all_devices(&ctx, devl, devl_count, 1 << protocol);
+	if (rc)
+		goto error;
+
+	params.desired_protocol = protocol;
+
+	rc = nfcctl_targets_found(&ctx, save_target_handler, &params);
+	if (rc)
+		goto error;
+
+	rc = nfcctl_target_init(&ctx, params.dev_idx, params.tgt_idx, protocol);
+	if (rc)
+		goto error;
+
+	rc = tag_mifare_write(ctx.target_fd, string, lenght);
+	if (rc != lenght) {
+		rc = errno;
+		goto error;
+	}
+
+	rc = 0;
+	goto out;
+
+error:
+	printerr("%s", strerror(rc));
+out:
+	nfcctl_deinit(&ctx);
+	return rc;
+}
+
 static void usage(const char *prog)
 {
-	printf("Usage: %s  [-v] [-p PROT] (-d|-t|-r)\n"
+	printf("Usage: %s  [-v] [-p PROT] (-d|-t|-r|-w STR)\n"
 		"Option:\t\t\t\tDescription:\n"
 		"-v, --verbose\t\t\tEnable verbosity\n"
 		"-p, --protocol\t\t\tRestrict to PROT protocol\n"
 		"\t\t\t\tPROT = {mifare}\n"
 		"-d, --list-devices\t\tList all attached NFC devices\n"
 		"-t, --list-targets\t\tList all found NFC targets\n"
-		"-r, --read-tag\t\t\tRead tag\n\n",
+		"-r, --read-tag\t\t\tRead tag\n"
+		"-w, --write-tag\t\t\tWrite STR to tag\n\n",
 		prog);
 
 	exit(EXIT_FAILURE);
@@ -321,6 +376,9 @@ int main(int argc, char **argv)
 	int opt, op_idx;
 	int rc;
 	int protocol;
+	size_t write_str_max = TAG_MIFARE_MAX_SIZE;
+	char write_str[write_str_max];
+	size_t write_str_len;
 
 	if (argc == 1)
 		usage(*argv);
@@ -330,7 +388,7 @@ int main(int argc, char **argv)
 	protocol = -1;
 
 	for (;;) {
-		opt = getopt_long(argc, argv, "vdtrp:", lops, &op_idx);
+		opt = getopt_long(argc, argv, "vdtrw:p:", lops, &op_idx);
 		if (opt < 0)
 			break;
 
@@ -346,6 +404,18 @@ int main(int argc, char **argv)
 			break;
 		case 'r':
 			cmd = CMD_READ_TAG;
+			break;
+		case 'w':
+			cmd = CMD_WRITE_TAG;
+			write_str_len = strlen(optarg);
+			if (write_str_len > write_str_max) {
+				printerr("Write up to %lu chars\n",
+								write_str_max);
+				usage(*argv);
+			}
+			if (write_str_len < write_str_max)
+				write_str_len++; /* '\0' */
+			strncpy(write_str, optarg, write_str_len);
 			break;
 		case 'p':
 			if (!strcasecmp(optarg, "mifare")) {
@@ -379,6 +449,13 @@ int main(int argc, char **argv)
 			usage(*argv);
 		}
 		rc = read_tag(protocol);
+		break;
+	case CMD_WRITE_TAG:
+		if (protocol == -1) {
+			printerr("-w command requires protocol choice");
+			usage(*argv);
+		}
+		rc = write_tag(protocol, write_str, write_str_len);
 		break;
 	default:
 		usage(*argv);

@@ -24,3 +24,4 @@
 #define TAG_MIFARE_MAX_SIZE 48
 
 int tag_mifare_read(int fd, void *buf, size_t count);
+int tag_mifare_write(int fd, const void *buf, size_t count);
