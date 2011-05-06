@@ -44,15 +44,6 @@
  *	%NFC_ATTR_DEVICE_INDEX)
  * @NFC_CMD_RESET_DEVICE: stop polling and deactivate all targets (requires
  *	%NFC_ATTR_DEVICE_INDEX)
- * @NFC_CMD_ACTIVATE_TARGET: activate a target for data exchange using a
- *	given protocol (requires %NFC_ATTR_DEVICE_INDEX, %NFC_ATTR_TARGET_INDEX
- *	and %NFC_ATTR_PROTOCOLS). The attribute %NFC_ATTR_PROTOCOLS must
- *	contain only one protocol.
- * @NFC_CMD_DEACTIVATE_TARGET: deactivate a target (requires
- *	%NFC_ATTR_DEVICE_INDEX and %NFC_ATTR_TARGET_INDEX)
- * @NFC_CMD_DATA_EXCHANGE: send and receive data using the activated protocol
- *	(requires %NFC_ATTR_DEVICE_INDEX, %NFC_ATTR_TARGET_INDEX and
- *	%NFC_ATTR_DATA)
  * @NFC_EVENT_TARGETS_FOUND: event emitted when a new target is found
  *	(it sends %NFC_ATTR_DEVICE_INDEX and %NFC_ATTR_TARGETS)
  */
@@ -62,9 +53,6 @@ enum nfc_commands {
 	NFC_CMD_START_POLL,
 	NFC_CMD_STOP_POLL,
 	NFC_CMD_RESET_DEVICE,
-	NFC_CMD_ACTIVATE_TARGET,
-	NFC_CMD_DEACTIVATE_TARGET,
-	NFC_CMD_DATA_EXCHANGE,
 	NFC_EVENT_TARGETS_FOUND,
 /* private: internal use only */
 	__NFC_CMD_AFTER_LAST
@@ -81,8 +69,6 @@ enum nfc_commands {
  * @NFC_ATTR_PROTOCOLS: nfc protocols - bitwise or-ed combination from
  *	NFC_PROTO_* constants
  * @NFC_ATTR_TARGETS: array of targets (see enum nfc_target_attr)
- * @NFC_ATTR_TARGET_INDEX: target index
- * @NFC_ATTR_DATA: payload data
  */
 enum nfc_attrs {
 	NFC_ATTR_UNSPEC,
@@ -90,8 +76,6 @@ enum nfc_attrs {
 	NFC_ATTR_DEVICE_NAME,
 	NFC_ATTR_PROTOCOLS,
 	NFC_ATTR_TARGETS,
-	NFC_ATTR_TARGET_INDEX,
-	NFC_ATTR_DATA,
 /* private: internal use only */
 	__NFC_ATTR_AFTER_LAST
 };
@@ -136,6 +120,11 @@ struct sockaddr_nfc {
 	sa_family_t sa_family;
 	__u32 dev_idx;
 	__u32 target_idx;
+	__u32 nfc_protocol;
 };
+
+/* NFC socket protocols */
+#define NFC_SOCKPROTO_RAW	0
+#define NFC_SOCKPROTO_MAX	1
 
 #endif /*__LINUX_NFC_H */
