@@ -42,8 +42,6 @@
  *	(requires %NFC_ATTR_DEVICE_INDEX and %NFC_ATTR_PROTOCOLS)
  * @NFC_CMD_STOP_POLL: stop polling for targets (requires
  *	%NFC_ATTR_DEVICE_INDEX)
- * @NFC_CMD_RESET_DEVICE: stop polling and deactivate all targets (requires
- *	%NFC_ATTR_DEVICE_INDEX)
  * @NFC_EVENT_TARGETS_FOUND: event emitted when a new target is found
  *	(it sends %NFC_ATTR_DEVICE_INDEX and %NFC_ATTR_TARGETS)
  */
@@ -52,7 +50,6 @@ enum nfc_commands {
 	NFC_CMD_GET_DEVICE,
 	NFC_CMD_START_POLL,
 	NFC_CMD_STOP_POLL,
-	NFC_CMD_RESET_DEVICE,
 	NFC_EVENT_TARGETS_FOUND,
 /* private: internal use only */
 	__NFC_CMD_AFTER_LAST
@@ -67,7 +64,7 @@ enum nfc_commands {
  * @NFC_ATTR_DEVICE_INDEX: index of nfc device
  * @NFC_ATTR_DEVICE_NAME: device name, max 8 chars
  * @NFC_ATTR_PROTOCOLS: nfc protocols - bitwise or-ed combination from
- *	NFC_PROTO_* constants
+ *	NFC_PROTO_*_MASK constants
  * @NFC_ATTR_TARGETS: array of targets (see enum nfc_target_attr)
  */
 enum nfc_attrs {
