@@ -544,57 +544,17 @@ const char *get_sound_file(uint16_t flags)
 static int run_test(uint32_t protocol, int *argc, char ***argv)
 {
 	unsigned i;
-	size_t len;
 	int err;
-	const char *s;
 
 	/* Initialize GStreamer */
 	gst_init(argc, argv);
 
-	/* Objects to be detected in order */
-	const uint16_t obj_list[9] = {
-		MISC_OBJ_CIGARETTE, MISC_OBJ_PEN, MISC_OBJ_BOOK,
-		MISC_OBJ_CELL_PHONE, MISC_OBJ_CHAIR, MISC_OBJ_TABLE,
-		MISC_OBJ_KEY, MISC_OBJ_BATTERY, MISC_OBJ_SERGIO_MURILO,
-	};
-
-	i = 0;
-	len = sizeof(obj_list[0]);
-
-	/* Initially write the first object id */
-	err = __write_tag(protocol, &obj_list[i++], len);
-	if (!err)
-		goto out;
-
-	do {
-		uint16_t flags;
-
-		err = __read_tag(protocol, &flags, len);
-		if (err)
-			goto out;
-
-		printdbg("Read data was 0x%x\n", flags);
-
-		s = get_sound_file(obj_list[i]);
-		if (!s) {
-			err = -1;
-			goto out;
-		}
-
-		printdbg("Found sound file: %s\n", s);
-
-		err = __write_tag(protocol, &obj_list[i], len);
-		if (err)
-			goto out;
-
-		printdbg("Written data was 0x%x\n", obj_list[i]);
-
-		err = misc_play_sound_file(sound_files_path, s,
+	for (i = 0; i < SOUND_FILE_MAX_SIZE; i++) {
+		err = misc_play_sound_file(sound_files_path, sound_files[i],
 						sound_file_suffix);
 		if (err)
 			goto out;
-
-	} while (++i < 9);
+	}
 
 	return 0;
 
@@ -627,6 +587,9 @@ int main(int argc, char **argv)
 	size_t write_str_max = TAG_MIFARE_MAX_SIZE;
 	char write_str[write_str_max];
 	size_t write_str_len;
+
+	(void)__read_tag;
+	(void)__write_tag;
 
 	if (argc == 1)
 		usage(*argv);
