@@ -246,6 +246,63 @@ static int save_target_handler(void *arg, uint32_t dev_idx,
 	return TARGET_FOUND_SKIP;
 }
 
+static int __read_tag(uint32_t protocol, void *buf, size_t len)
+{
+	struct nfcctl ctx;
+	struct nfc_dev devl[NFC_DEV_MAX];
+	uint8_t devl_count;
+	struct save_target_hdl_data params;
+	int rc;
+
+	if (protocol != NFC_PROTO_MIFARE) {
+		printerr("Tag read support for protocol (%d) not"
+						" implemented\n", protocol);
+		return -ENOSYS;
+	}
+
+	if (len > TAG_MIFARE_MAX_SIZE + 1) {
+		printerr("Length > TAG_MIFARE_MAX_SIZE + 1\n");
+		return -EINVAL;
+	}
+
+	rc = init_and_get_devices(&ctx, devl);
+	if (rc < 0)
+		goto error;
+
+	devl_count = rc;
+	if (!devl_count)
+		goto out;
+
+	rc = start_poll_all_devices(&ctx, devl, devl_count, 1 << protocol);
+	if (rc)
+		goto error;
+
+	params.desired_protocol = protocol;
+
+	rc = nfcctl_targets_found(&ctx, save_target_handler, &params);
+	if (rc)
+		goto error;
+
+	rc = nfcctl_target_init(&ctx, params.dev_idx, params.tgt_idx, protocol);
+	if (rc)
+		goto error;
+
+	rc = tag_mifare_read(ctx.target_fd, buf, len - 1);
+	if (rc == -1) {
+		rc = errno;
+		goto error;
+	}
+
+	rc = 0;
+	goto out;
+
+error:
+	printerr("%s", strerror(rc));
+out:
+	nfcctl_deinit(&ctx);
+	return rc;
+}
+
 static int read_tag(uint32_t protocol)
 {
 	struct nfcctl ctx;
@@ -301,6 +358,59 @@ error:
 out:
 	nfcctl_deinit(&ctx);
 	return rc;
+}
+
+static int __write_tag(uint32_t protocol, const void *buf, size_t len)
+{
+	struct nfcctl ctx;
+	struct nfc_dev devl[NFC_DEV_MAX];
+	uint8_t devl_count;
+	struct save_target_hdl_data params;
+	int rc;
+
+	if (protocol != NFC_PROTO_MIFARE) {
+		printerr("Tag write support for protocol (%d) not"
+						" implemented\n", protocol);
+		return -ENOSYS;
+	}
+
+	rc = init_and_get_devices(&ctx, devl);
+	if (rc < 0)
+		goto error;
+
+	devl_count = rc;
+	if (!devl_count)
+		goto out;
+
+	rc = start_poll_all_devices(&ctx, devl, devl_count, 1 << protocol);
+	if (rc)
+		goto error;
+
+	params.desired_protocol = protocol;
+
+	rc = nfcctl_targets_found(&ctx, save_target_handler, &params);
+	if (rc)
+		goto error;
+
+	rc = nfcctl_target_init(&ctx, params.dev_idx, params.tgt_idx, protocol);
+	if (rc)
+		goto error;
+
+	rc = tag_mifare_write(ctx.target_fd, buf, len);
+	if (rc != len) {
+		rc = errno;
+		goto error;
+	}
+
+	rc = 0;
+	goto out;
+
+error:
+	printerr("%s", strerror(rc));
+out:
+	nfcctl_deinit(&ctx);
+	return rc;
+
 }
 
 static int write_tag(uint32_t protocol, char *string, size_t lenght)
@@ -379,6 +489,9 @@ int main(int argc, char **argv)
 	size_t write_str_max = TAG_MIFARE_MAX_SIZE;
 	char write_str[write_str_max];
 	size_t write_str_len;
+
+	(void)__read_tag;
+	(void)__write_tag;
 
 	if (argc == 1)
 		usage(*argv);
