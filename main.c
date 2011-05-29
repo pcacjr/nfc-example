@@ -28,9 +28,13 @@
 #include <errno.h>
 #include <sys/socket.h>
 
+#include <gst/gst.h>
+#include <glib.h>
+
 #include "nfcctl.h"
 #include "tag_mifare.h"
 #include "linux/nfc.h"
+#include "misc.h"
 
 #define NFC_DEV_MAX 4
 
@@ -52,6 +56,7 @@ enum {
 	CMD_LIST_TARGETS,
 	CMD_READ_TAG,
 	CMD_WRITE_TAG,
+	CMD_RUN_TEST,
 };
 
 int cmd;
@@ -63,7 +68,38 @@ const struct option lops[] = {
 	{ "read-tag", no_argument, &cmd, CMD_READ_TAG },
 	{ "write-tag", required_argument, &cmd, CMD_WRITE_TAG },
 	{ "protocol", required_argument, NULL, 'p' },
+	{ "run-test", no_argument, &cmd, CMD_RUN_TEST },
 	{ 0, 0, 0, 0 },
+};
+
+const char *sound_files_path = "/home/pcacjr/vol0/devel/nfc-example/sounds/";
+const char *sound_file_suffix = ".mp3";
+
+/* Sound File Indexes */
+enum {
+	SOUND_FILE_CIGARETTE,
+	SOUND_FILE_PEN,
+	SOUND_FILE_BOOK,
+	SOUND_FILE_CELL_PHONE,
+	SOUND_FILE_MOUSE,
+	SOUND_FILE_CHAIR,
+	SOUND_FILE_TABLE,
+	SOUND_FILE_SERGIO_MURILO,
+	SOUND_FILE_KEY,
+	SOUND_FILE_LIGHTER,
+	SOUND_FILE_BATTERY,
+	SOUND_FILE_CABLE,
+	SOUND_FILE_LAPTOP,
+
+	/* You might want to add other objects here... */
+
+	SOUND_FILE_MAX_SIZE,
+};
+
+/* Sound File Names */
+const char *sound_files[SOUND_FILE_MAX_SIZE] = {
+	"cigarette", "pen", "book", "cell_phone", "mouse", "chair", "table",
+	"sergio_murilo", "key", "lighter", "battery", "cable", "laptop",
 };
 
 static void print_devices(const struct nfc_dev *devl, uint8_t devl_count)
@@ -465,6 +501,107 @@ out:
 	return rc;
 }
 
+/* Return the sound file name */
+const char *get_sound_file(uint16_t flags)
+{
+	const char *file = NULL;
+
+	if (flags & ~MISC_OBJ_MASK) {
+		print_err("invalid flags");
+		return NULL;
+	}
+
+	if (flags & MISC_OBJ_CIGARETTE)
+		file = sound_files[SOUND_FILE_CIGARETTE];
+	else if (flags & MISC_OBJ_PEN)
+		file = sound_files[SOUND_FILE_PEN];
+	else if (flags & MISC_OBJ_BOOK)
+		file = sound_files[SOUND_FILE_BOOK];
+	else if (flags & MISC_OBJ_CELL_PHONE)
+		file = sound_files[SOUND_FILE_CELL_PHONE];
+	else if (flags & MISC_OBJ_MOUSE)
+		file = sound_files[SOUND_FILE_MOUSE];
+	else if (flags & MISC_OBJ_CHAIR)
+		file = sound_files[SOUND_FILE_CHAIR];
+	else if (flags & MISC_OBJ_TABLE)
+		file = sound_files[SOUND_FILE_TABLE];
+	else if (flags & MISC_OBJ_SERGIO_MURILO)
+		file = sound_files[SOUND_FILE_SERGIO_MURILO];
+	else if (flags & MISC_OBJ_KEY)
+		file = sound_files[SOUND_FILE_KEY];
+	else if (flags & MISC_OBJ_LIGHTER)
+		file = sound_files[SOUND_FILE_LIGHTER];
+	else if (flags & MISC_OBJ_BATTERY)
+		file = sound_files[SOUND_FILE_BATTERY];
+	else if (flags & MISC_OBJ_CABLE)
+		file = sound_files[SOUND_FILE_CABLE];
+	else if (flags & MISC_OBJ_LAPTOP)
+		file = sound_files[SOUND_FILE_LAPTOP];
+
+	return file;
+}
+
+static int run_test(uint32_t protocol, int *argc, char ***argv)
+{
+	unsigned i;
+	size_t len;
+	int err;
+	const char *s;
+
+	/* Initialize GStreamer */
+	gst_init(argc, argv);
+
+	/* Objects to be detected in order */
+	const uint16_t obj_list[9] = {
+		MISC_OBJ_CIGARETTE, MISC_OBJ_PEN, MISC_OBJ_BOOK,
+		MISC_OBJ_CELL_PHONE, MISC_OBJ_CHAIR, MISC_OBJ_TABLE,
+		MISC_OBJ_KEY, MISC_OBJ_BATTERY, MISC_OBJ_SERGIO_MURILO,
+	};
+
+	i = 0;
+	len = sizeof(obj_list[0]);
+
+	/* Initially write the first object id */
+	err = __write_tag(protocol, &obj_list[i++], len);
+	if (!err)
+		goto out;
+
+	do {
+		uint16_t flags;
+
+		err = __read_tag(protocol, &flags, len);
+		if (err)
+			goto out;
+
+		printdbg("Read data was 0x%x\n", flags);
+
+		s = get_sound_file(obj_list[i]);
+		if (!s) {
+			err = -1;
+			goto out;
+		}
+
+		printdbg("Found sound file: %s\n", s);
+
+		err = __write_tag(protocol, &obj_list[i], len);
+		if (err)
+			goto out;
+
+		printdbg("Written data was 0x%x\n", obj_list[i]);
+
+		err = misc_play_sound_file(sound_files_path, s,
+						sound_file_suffix);
+		if (err)
+			goto out;
+
+	} while (++i < 9);
+
+	return 0;
+
+out:
+	return err;
+}
+
 static void usage(const char *prog)
 {
 	printf("Usage: %s  [-v] [-p PROT] (-d|-t|-r|-w STR)\n"
@@ -475,7 +612,8 @@ static void usage(const char *prog)
 		"-d, --list-devices\t\tList all attached NFC devices\n"
 		"-t, --list-targets\t\tList all found NFC targets\n"
 		"-r, --read-tag\t\t\tRead tag\n"
-		"-w, --write-tag\t\t\tWrite STR to tag\n\n",
+		"-w, --write-tag\t\t\tWrite STR to tag\n"
+		"-s, --run-test\t\t\tRun test\n\n",
 		prog);
 
 	exit(EXIT_FAILURE);
@@ -490,9 +628,6 @@ int main(int argc, char **argv)
 	char write_str[write_str_max];
 	size_t write_str_len;
 
-	(void)__read_tag;
-	(void)__write_tag;
-
 	if (argc == 1)
 		usage(*argv);
 
@@ -501,7 +636,7 @@ int main(int argc, char **argv)
 	protocol = -1;
 
 	for (;;) {
-		opt = getopt_long(argc, argv, "vdtrw:p:", lops, &op_idx);
+		opt = getopt_long(argc, argv, "vdtsrw:p:", lops, &op_idx);
 		if (opt < 0)
 			break;
 
@@ -539,6 +674,9 @@ int main(int argc, char **argv)
 				usage(*argv);
 			}
 			break;
+		case 's':
+			cmd = CMD_RUN_TEST;
+			break;
 		case 0:
 			break;
 		default:
@@ -570,10 +708,17 @@ int main(int argc, char **argv)
 		}
 		rc = write_tag(protocol, write_str, write_str_len);
 		break;
+	case CMD_RUN_TEST:
+		if (protocol == -1) {
+			printerr("-s command requires protocol choice");
+			usage(*argv);
+		}
+
+		rc = run_test(protocol, &argc, &argv);
+		break;
 	default:
 		usage(*argv);
 	}
 
 	return rc < 0 ? -rc : rc;
 }
-
