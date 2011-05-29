@@ -27,10 +27,15 @@
 #include <getopt.h>
 #include <errno.h>
 #include <sys/socket.h>
+#include <ctype.h>
+
+#include <gst/gst.h>
+#include <glib.h>
 
 #include "nfcctl.h"
 #include "tag_mifare.h"
 #include "linux/nfc.h"
+#include "misc.h"
 
 #define NFC_DEV_MAX 4
 
@@ -52,6 +57,8 @@ enum {
 	CMD_LIST_TARGETS,
 	CMD_READ_TAG,
 	CMD_WRITE_TAG,
+	CMD_OTHER_WRITE_TAG,
+	CMD_RUN_TEST,
 };
 
 int cmd;
@@ -62,8 +69,42 @@ const struct option lops[] = {
 	{ "list-targets", no_argument, &cmd, CMD_LIST_TARGETS },
 	{ "read-tag", no_argument, &cmd, CMD_READ_TAG },
 	{ "write-tag", required_argument, &cmd, CMD_WRITE_TAG },
+	{ "other-write-tag", required_argument, &cmd, CMD_OTHER_WRITE_TAG },
 	{ "protocol", required_argument, NULL, 'p' },
+	{ "run-test", no_argument, &cmd, CMD_RUN_TEST },
 	{ 0, 0, 0, 0 },
+};
+
+const char *sound_files_path = "/home/pcacjr/vol0/devel/nfc-example/sounds/";
+const char *sound_file_suffix = ".mp3";
+
+/* Sound File Indexes */
+enum {
+	SOUND_FILE_CIGARETTE,
+	SOUND_FILE_PEN,
+	SOUND_FILE_BOOK,
+	SOUND_FILE_CELL_PHONE,
+	SOUND_FILE_MOUSE,
+	SOUND_FILE_CHAIR,
+	SOUND_FILE_TABLE,
+	SOUND_FILE_SERGIO_MURILO,
+
+	/* Sound files not recorded yet */
+	SOUND_FILE_KEY,
+	SOUND_FILE_LIGHTER,
+	SOUND_FILE_BATTERY,
+	SOUND_FILE_CABLE,
+	SOUND_FILE_LAPTOP,
+
+	/* You might want to add other objects here... */
+
+	SOUND_FILE_MAX_SIZE,
+};
+
+/* Sound File Names */
+const char *sound_files[SOUND_FILE_MAX_SIZE] = {
+	"cigarette", "pen", "book", "cell_phone", "mouse", "chair", "table",
+	"sergio_murilo", "key", "lighter", "battery", "cable", "laptop",
 };
 
 static void print_devices(const struct nfc_dev *devl, uint8_t devl_count)
@@ -287,7 +328,7 @@ static int __read_tag(uint32_t protocol, void *buf, size_t len)
 	if (rc)
 		goto error;
 
-	rc = tag_mifare_read(ctx.target_fd, buf, len - 1);
+	rc = tag_mifare_read(ctx.target_fd, buf, len);
 	if (rc == -1) {
 		rc = errno;
 		goto error;
@@ -396,7 +437,7 @@ static int __write_tag(uint32_t protocol, const void *buf, size_t len)
 	if (rc)
 		goto error;
 
-	rc = tag_mifare_write(ctx.target_fd, buf, len);
+	rc = tag_mifare_write(ctx.target_fd, buf, len + 5);
 	if (rc != len) {
 		rc = errno;
 		goto error;
@@ -410,7 +451,6 @@ error:
 out:
 	nfcctl_deinit(&ctx);
 	return rc;
-
 }
 
 static int write_tag(uint32_t protocol, char *string, size_t lenght)
@@ -465,9 +505,86 @@ out:
 	return rc;
 }
 
+/* Return the sound file name */
+const char *get_sound_file(uint16_t flags)
+{
+	const char *file = NULL;
+
+	if (flags & ~MISC_OBJ_MASK) {
+		print_err("invalid flags");
+		return NULL;
+	}
+
+	if (flags & MISC_OBJ_CIGARETTE)
+		file = sound_files[SOUND_FILE_CIGARETTE];
+	else if (flags & MISC_OBJ_PEN)
+		file = sound_files[SOUND_FILE_PEN];
+	else if (flags & MISC_OBJ_BOOK)
+		file = sound_files[SOUND_FILE_BOOK];
+	else if (flags & MISC_OBJ_CELL_PHONE)
+		file = sound_files[SOUND_FILE_CELL_PHONE];
+	else if (flags & MISC_OBJ_MOUSE)
+		file = sound_files[SOUND_FILE_MOUSE];
+	else if (flags & MISC_OBJ_CHAIR)
+		file = sound_files[SOUND_FILE_CHAIR];
+	else if (flags & MISC_OBJ_TABLE)
+		file = sound_files[SOUND_FILE_TABLE];
+	else if (flags & MISC_OBJ_SERGIO_MURILO)
+		file = sound_files[SOUND_FILE_SERGIO_MURILO];
+	else if (flags & MISC_OBJ_KEY)
+		file = sound_files[SOUND_FILE_KEY];
+	else if (flags & MISC_OBJ_LIGHTER)
+		file = sound_files[SOUND_FILE_LIGHTER];
+	else if (flags & MISC_OBJ_BATTERY)
+		file = sound_files[SOUND_FILE_BATTERY];
+	else if (flags & MISC_OBJ_CABLE)
+		file = sound_files[SOUND_FILE_CABLE];
+	else if (flags & MISC_OBJ_LAPTOP)
+		file = sound_files[SOUND_FILE_LAPTOP];
+
+	return file;
+}
+
+static int run_test(uint32_t protocol, int *argc, char ***argv)
+{
+	int err;
+	const char *s;
+	uint16_t flags;
+
+	/* Initialize GStreamer */
+	gst_init(argc, argv);
+
+	for (;;) {
+		err = __read_tag(protocol, &flags, sizeof(flags));
+		if (err)
+			goto out;
+
+		printdbg("Read data was 0x%04x", flags);
+
+		s = get_sound_file(flags);
+		if (!s) {
+			err = -1;
+			goto out;
+		}
+
+		printdbg("Found sound file: %s", s);
+
+		err = misc_play_sound_file(sound_files_path, s,
+						sound_file_suffix);
+		if (err)
+			goto out;
+	}
+
+	return 0;
+
+out:
+	printerr("%s", strerror(err));
+	return err;
+}
+
 static void usage(const char *prog)
 {
-	printf("Usage: %s  [-v] [-p PROT] (-d|-t|-r|-w STR)\n"
+	printf("Usage: %s  [-v] [-p PROT] (-d|-t|-r|-w STR|-o STREAM|-s)\n"
 		"Option:\t\t\t\tDescription:\n"
 		"-v, --verbose\t\t\tEnable verbosity\n"
 		"-p, --protocol\t\t\tRestrict to PROT protocol\n"
@@ -475,7 +592,9 @@ static void usage(const char *prog)
 		"-d, --list-devices\t\tList all attached NFC devices\n"
 		"-t, --list-targets\t\tList all found NFC targets\n"
 		"-r, --read-tag\t\t\tRead tag\n"
-		"-w, --write-tag\t\t\tWrite STR to tag\n\n",
+		"-w, --write-tag\t\t\tWrite STR to tag\n"
+		"-o, --other-write-tag\t\tWrite byte stream to tag\n"
+		"-s, --run-test\t\t\tRun test\n\n",
 		prog);
 
 	exit(EXIT_FAILURE);
@@ -489,9 +608,9 @@ int main(int argc, char **argv)
 	size_t write_str_max = TAG_MIFARE_MAX_SIZE;
 	char write_str[write_str_max];
 	size_t write_str_len;
-
-	(void)__read_tag;
-	(void)__write_tag;
+	uint8_t *buffer = NULL;
+	size_t len;
+	uint64_t val;
 
 	if (argc == 1)
 		usage(*argv);
@@ -501,7 +620,7 @@ int main(int argc, char **argv)
 	protocol = -1;
 
 	for (;;) {
-		opt = getopt_long(argc, argv, "vdtrw:p:", lops, &op_idx);
+		opt = getopt_long(argc, argv, "vdtsrw:p:o:", lops, &op_idx);
 		if (opt < 0)
 			break;
 
@@ -530,6 +649,24 @@ int main(int argc, char **argv)
 				write_str_len++; /* '\0' */
 			strncpy(write_str, optarg, write_str_len);
 			break;
+		case 'o':
+			cmd = CMD_OTHER_WRITE_TAG;
+			len = 2; /* About to write 2 bytes (16-bit number) */
+
+			buffer = (uint8_t *)malloc(len);
+			if (!buffer) {
+				printerr("alloc uint8_t *\n");
+				return -ENOMEM;
+			}
+
+			memset(buffer, 0, len);
+
+			val = atol(optarg);
+			memcpy(buffer, &val, len);
+			printdbg("buffer = 0x%04x",
+				*((uint16_t *)(uint8_t *)&buffer[0]));
+
+			break;
 		case 'p':
 			if (!strcasecmp(optarg, "mifare")) {
 				protocol = NFC_PROTO_MIFARE;
@@ -538,6 +675,9 @@ int main(int argc, char **argv)
 									optarg);
 				usage(*argv);
 			}
+			break;
+		case 's':
+			cmd = CMD_RUN_TEST;
 			break;
 		case 0:
 			break;
@@ -570,10 +710,30 @@ int main(int argc, char **argv)
 		}
 		rc = write_tag(protocol, write_str, write_str_len);
 		break;
+	case CMD_OTHER_WRITE_TAG:
+		if (!len) {
+			printerr("-o command requires length choice\n");
+			usage(*argv);
+		}
+
+		if (protocol == -1) {
+			printerr("-w command requires protocol choice");
+			usage(*argv);
+		}
+
+		rc = __write_tag(protocol, buffer, len);
+		break;
+	case CMD_RUN_TEST:
+		if (protocol == -1) {
+			printerr("-s command requires protocol choice");
+			usage(*argv);
+		}
+
+		rc = run_test(protocol, &argc, &argv);
+		break;
 	default:
 		usage(*argv);
 	}
 
 	return rc < 0 ? -rc : rc;
 }
-

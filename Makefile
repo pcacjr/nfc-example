@@ -25,13 +25,22 @@ CC=gcc
 CFLAGS=-g -Wall
 INCS=-Iinclude/
 LIBS=-lnl-genl
-OBJS=tag_mifare.o nfcctl.o main.o
+OBJS=misc.o tag_mifare.o nfcctl.o main.o
 
 nfcex:	$(OBJS)
-	$(CC) $(OBJS) -o nfcex $(LIBS)
+	$(CC) $(OBJS) `pkg-config --libs --cflags gstreamer-0.10` -o nfcex $(LIBS)
 
-%.o: %.c
+misc.o: misc.c
+	$(CC) `pkg-config --libs --cflags gstreamer-0.10` -c $< -o $@
+
+tag_mifare.o: tag_mifare.c
 	$(CC) $(INCS) $(CFLAGS) -c $< -o $@
+
+nfcctl.o: nfcctl.c
+	$(CC) $(INCS) $(CFLAGS) -c $< -o $@
+
+main.o: main.c
+	$(CC) $(INCS) $(CFLAGS) `pkg-config --libs --cflags gstreamer-0.10` -c $< -o $@
 
 clean:
 	-rm -rf *.o nfcex
